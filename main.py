@@ -52,10 +52,10 @@ class Entrega(BaseModel):
 # --- CONEXÃO COM O BANCO DE DADOS ---
 def get_db_connection():
     return mysql.connector.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME"),
+        host=os.getenv("DB_HOST", "localhost"),
+        user=os.getenv("DB_USER", "root"),
+        password=os.getenv("DB_PASSWORD", ""),
+        database=os.getenv("DB_NAME", "epi_guard"),
         port=int(os.getenv("DB_PORT", 3306))
     )
 
@@ -64,7 +64,7 @@ def get_db_connection():
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.post("/usuarios")
