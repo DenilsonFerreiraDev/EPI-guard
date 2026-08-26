@@ -11,9 +11,20 @@
             --fundo-dark: #121214; --card-dark: #1c1c1f;
             --azul-logo: #0a2647; --laranja-logo: #f28c28;
             --texto-claro: #e1e1e6; --texto-muted: #a8a8b3; --borda: #29292e;
-            --ia-azul: #3b82f6;
+            --ia-azul: #3b82f6; --verde-status: #10b981; --vermelho-status: #ef4444;
         }
         body { font-family: 'Inter', sans-serif; background: var(--fundo-dark); color: var(--texto-claro); margin: 0; }
+
+        /* Barra de Autenticação */
+        .auth-bar { background: #18181b; padding: 10px 20px; display: flex; justify-content: flex-end; align-items: center; gap: 15px; border-bottom: 1px solid var(--borda); font-size: 14px; }
+        .user-status { display: flex; align-items: center; gap: 8px; color: var(--texto-muted); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vermelho-status); }
+        .status-dot.logged { background: var(--verde-status); }
+        .btn-auth { background: transparent; border: 1px solid var(--laranja-logo); color: var(--laranja-logo); padding: 6px 14px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-auth:hover { background: var(--laranja-logo); color: #fff; }
+        .btn-demo { background: #29292e; border: 1px dashed var(--laranja-logo); color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-top: 12px; width: 100%; transition: 0.2s; }
+        .btn-demo:hover { background: var(--laranja-logo); }
+
         header { background: var(--card-dark); text-align: center; padding: 30px 0; border-bottom: 3px solid var(--laranja-logo); }
         .logo-img { max-width: 280px; filter: drop-shadow(0 0 10px rgba(242, 140, 40, 0.2)); }
         .container { max-width: 900px; margin: 40px auto; padding: 0 20px; }
@@ -37,6 +48,14 @@
     </style>
 </head>
 <body>
+
+<div class="auth-bar">
+    <div class="user-status">
+        <div id="auth-dot" class="status-dot"></div>
+        <span id="auth-text">Não autenticado</span>
+    </div>
+    <button id="btn-auth-action" class="btn-auth" onclick="handleAuthAction()">Entrar</button>
+</div>
 
 <header><img src="/static/EPIGUARD.png" alt="EPI GUARD" class="logo-img"></header>
 
@@ -98,6 +117,144 @@
 <script>
     let meuGrafico = null;
 
+    // --- GERENCIAMENTO DE AUTENTICAÇÃO ---
+
+    function obterToken() {
+        return localStorage.getItem('epi_token');
+    }
+
+    function salvarToken(token, email) {
+        localStorage.setItem('epi_token', token);
+        localStorage.setItem('epi_user', email);
+        atualizarInterfaceAuth();
+    }
+
+    function logout() {
+        localStorage.removeItem('epi_token');
+        localStorage.removeItem('epi_user');
+        atualizarInterfaceAuth();
+        Swal.fire('Sessão Encerrada', 'Você saiu do sistema.', 'info');
+        carregarRelatorio();
+    }
+
+    function atualizarInterfaceAuth() {
+        const token = obterToken();
+        const user = localStorage.getItem('epi_user');
+        const dot = document.getElementById('auth-dot');
+        const text = document.getElementById('auth-text');
+        const btn = document.getElementById('btn-auth-action');
+
+        if (token) {
+            dot.classList.add('logged');
+            text.innerText = user ? `Conectado: ${user}` : 'Autenticado';
+            btn.innerText = 'Sair';
+        } else {
+            dot.classList.remove('logged');
+            text.innerText = 'Não autenticado';
+            btn.innerText = 'Entrar';
+        }
+    }
+
+    function handleAuthAction() {
+        if (obterToken()) {
+            logout();
+        } else {
+            exibirModalLogin();
+        }
+    }
+
+    function preencherCredenciaisDemo() {
+        document.getElementById('swal-input-email').value = 'denilson@gmail.com';
+        document.getElementById('swal-input-password').value = '20168743De*';
+    }
+
+    async function exibirModalLogin() {
+        const { value: formValues } = await Swal.fire({
+            title: 'Acesso do Gestor / Demo',
+            background: '#1c1c1f',
+            color: '#e1e1e6',
+            html: `
+                <p style="color: var(--texto-muted); font-size: 13px; margin-bottom: 15px;">
+                    Para testar o dashboard, IA e formulários protegidos, faça login ou utilize o botão rápido de demonstração.
+                </p>
+                <input id="swal-input-email" class="swal2-input" placeholder="E-mail" style="background:#121214; color:#fff; border-color:#29292e;">
+                <input id="swal-input-password" type="password" class="swal2-input" placeholder="Senha" style="background:#121214; color:#fff; border-color:#29292e;">
+                <button type="button" class="btn-demo" onclick="preencherCredenciaisDemo()">
+                    ⚡ Preencher Acesso de Teste (Demo)
+                </button>
+            `,
+            focusConfirm: false,
+            confirmButtonText: 'Entrar',
+            confirmButtonColor: '#f28c28',
+            showCancelButton: true,
+            cancelButtonText: 'Cancelar',
+            cancelButtonColor: '#29292e',
+            preConfirm: () => {
+                const email = document.getElementById('swal-input-email').value;
+                const password = document.getElementById('swal-input-password').value;
+                if (!email || !password) {
+                    Swal.showValidationMessage('Preencha e-mail e senha');
+                    return false;
+                }
+                return { email, password };
+            }
+        });
+
+        if (formValues) {
+            realizarLogin(formValues.email, formValues.password);
+        }
+    }
+
+    async function realizarLogin(email, password) {
+        const formData = new URLSearchParams();
+        formData.append('username', email);
+        formData.append('password', password);
+
+        try {
+            const res = await fetch('/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: formData
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+                salvarToken(data.access_token, email);
+                Swal.fire('Sucesso', 'Login efetuado com sucesso!', 'success');
+                carregarRelatorio();
+            } else {
+                Swal.fire('Erro de Acesso', data.detail || 'Credenciais inválidas.', 'error');
+            }
+        } catch (error) {
+            Swal.fire('Erro', 'Falha ao conectar com o servidor.', 'error');
+        }
+    }
+
+    async function requisicaoAutenticada(url, options = {}) {
+        const token = obterToken();
+        if (!token) {
+            exibirModalLogin();
+            throw new Error('Usuário não autenticado');
+        }
+
+        const headers = options.headers || {};
+        headers['Authorization'] = `Bearer ${token}`;
+        options.headers = headers;
+
+        const resposta = await fetch(url, options);
+
+        if (resposta.status === 401) {
+            logout();
+            exibirModalLogin();
+            throw new Error('Sessão expirada. Faça login novamente.');
+        }
+
+        return resposta;
+    }
+
+    // --- NAVEGAÇÃO E REQUISIÇÕES DE NEGÓCIO ---
+
     function mudarAba(idAba, btn) {
         document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -109,15 +266,15 @@
     }
 
     async function pedirConselhoIA() {
-        Swal.fire({
-            title: 'Consultando o Gemini...',
-            text: 'Analisando dados de estoque para recomendações.',
-            allowOutsideClick: false,
-            didOpen: () => { Swal.showLoading() }
-        });
-
         try {
-            const res = await fetch('/analise-ia');
+            Swal.fire({
+                title: 'Consultando o Gemini...',
+                text: 'Analisando dados de estoque para recomendações.',
+                allowOutsideClick: false,
+                didOpen: () => { Swal.showLoading() }
+            });
+
+            const res = await requisicaoAutenticada('/analise-ia');
             const dados = await res.json();
             Swal.fire({
                 title: 'Conselho da IA',
@@ -126,35 +283,45 @@
                 confirmButtonColor: '#3b82f6'
             });
         } catch (e) {
-            Swal.fire('Erro', 'Não foi possível falar com a IA.', 'error');
+            if (e.message !== 'Usuário não autenticado') {
+                Swal.fire('Aviso', e.message || 'Não foi possível consultar a IA.', 'warning');
+            }
         }
     }
 
     async function carregarDashboard() {
-        const res = await fetch('/dashboard-stats');
-        const dados = await res.json();
+        try {
+            const res = await requisicaoAutenticada('/dashboard-stats');
+            const dados = await res.json();
 
-        document.getElementById('kpi-critico').innerText = dados.estoque_critico ?? 0;
-        document.getElementById('kpi-hoje').innerText = dados.entregas_hoje ?? 0;
+            document.getElementById('kpi-critico').innerText = dados.estoque_critico ?? 0;
+            document.getElementById('kpi-hoje').innerText = dados.entregas_hoje ?? 0;
 
-        if (dados.top_epis && dados.top_epis.length > 0) {
-            const ctx = document.getElementById('graficoEPIs').getContext('2d');
-            if (meuGrafico) meuGrafico.destroy();
-            meuGrafico = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: dados.top_epis.map(i => i.epi_nome),
-                    datasets: [{ label: 'Retiradas', data: dados.top_epis.map(i => i.total), backgroundColor: '#f28c28' }]
-                },
-                options: { scales: { y: { beginAtZero: true } } }
-            });
+            if (dados.top_epis && dados.top_epis.length > 0) {
+                const ctx = document.getElementById('graficoEPIs').getContext('2d');
+                if (meuGrafico) meuGrafico.destroy();
+                meuGrafico = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: dados.top_epis.map(i => i.epi_nome),
+                        datasets: [{ label: 'Retiradas', data: dados.top_epis.map(i => i.total), backgroundColor: '#f28c28' }]
+                    },
+                    options: { scales: { y: { beginAtZero: true } } }
+                });
+            }
+        } catch (e) {
+            console.warn('Dashboard requer autenticação.');
         }
     }
 
     async function carregarRelatorio() {
-        const res = await fetch('/relatorio-entregas');
-        const dados = await res.json();
-        document.getElementById('lista-entregas').innerHTML = dados.map(i => `<tr><td>${i.funcionario}</td><td>${i.equipamento}</td><td>${i.ca}</td></tr>`).join('');
+        try {
+            const res = await requisicaoAutenticada('/relatorio-entregas');
+            const dados = await res.json();
+            document.getElementById('lista-entregas').innerHTML = dados.map(i => `<tr><td>${i.funcionario}</td><td>${i.equipamento}</td><td>${i.ca}</td></tr>`).join('');
+        } catch (e) {
+            document.getElementById('lista-entregas').innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--texto-muted);">Faça login para visualizar as entregas.</td></tr>';
+        }
     }
 
     async function carregarEstoque() {
@@ -165,33 +332,68 @@
 
     async function registrarEntrega() {
         const body = { funcionario_id: parseInt(document.getElementById('ent_func_id').value), epi_nome: document.getElementById('ent_epi_nome').value, ca_numero: document.getElementById('ent_ca_num').value };
-        const res = await fetch('/entregas', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-        const data = await res.json();
-        Swal.fire(res.ok ? 'Sucesso' : 'Erro', data.mensagem || data.erro, res.ok ? 'success' : 'error');
-        carregarRelatorio();
+        try {
+            const res = await requisicaoAutenticada('/entregas', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            Swal.fire(res.ok ? 'Sucesso' : 'Erro', data.mensagem || data.erro, res.ok ? 'success' : 'error');
+            carregarRelatorio();
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     async function cadastrarFuncionario() {
         const body = { nome: document.getElementById('func_nome').value, cargo: document.getElementById('func_cargo').value, cpf: document.getElementById('func_cpf').value };
-        const res = await fetch('/usuarios', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-        if(res.ok) Swal.fire('Cadastrado!', '', 'success');
+        try {
+            const res = await requisicaoAutenticada('/usuarios', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            if(res.ok) Swal.fire('Cadastrado!', '', 'success');
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     async function cadastrarEPI() {
         const body = { nome_epi: document.getElementById('epi_nome_cad').value, ca_numero: document.getElementById('epi_ca_cad').value, quantidade: parseInt(document.getElementById('epi_qtd_cad').value) };
-        const res = await fetch('/epis', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-        if(res.ok) { Swal.fire('Adicionado!', '', 'success'); carregarEstoque(); }
+        try {
+            const res = await requisicaoAutenticada('/epis', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            if(res.ok) { Swal.fire('Adicionado!', '', 'success'); carregarEstoque(); }
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     async function reporEstoque(id, nome, ca) {
         const { value: q } = await Swal.fire({ title: `Repor ${nome}`, input: 'number', confirmButtonColor: '#f28c28' });
         if (q) {
-            await fetch(`/epis/${id}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nome_epi: nome, ca_numero: ca, quantidade: parseInt(q)})});
-            carregarEstoque();
+            try {
+                await requisicaoAutenticada(`/epis/${id}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({nome_epi: nome, ca_numero: ca, quantidade: parseInt(q)})
+                });
+                carregarEstoque();
+            } catch (e) {
+                console.error(e);
+            }
         }
     }
 
-    window.onload = carregarRelatorio;
+    window.onload = () => {
+        atualizarInterfaceAuth();
+        carregarRelatorio();
+    };
 </script>
 </body>
 </html>

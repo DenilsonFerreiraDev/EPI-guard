@@ -2,11 +2,20 @@ import os
 import mysql.connector
 from google import genai
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
+
+# Importação dos métodos de autenticação do módulo auth.py
+from auth import (
+    criar_token_acesso,
+    obter_usuario_atual,
+    verificar_senha,
+    gerar_hash_senha
+)
 
 # 1. CARREGAMENTO DAS VARIÁVEIS DE AMBIENTE
 load_dotenv()
@@ -60,27 +69,44 @@ def get_db_connection():
     )
 
 
-# --- ROTAS DO SISTEMA ---
+# --- ROTAS DE AUTENTICAÇÃO ---
+
+@app.post("/token")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Rota de login OAuth2 padrão.
+    Valida as credenciais do usuário e retorna um token JWT de acesso.
+    """
+    conexao = get_db_connection()
+    cursor = conexao.cursor(dictionary=True)
+    try:
+        # Busca o usuário na tabela de administradores/gestores
+        cursor.execute(
+            "SELECT * FROM administradores WHERE email = %s",
+            (form_data.username,)
+        )
+        usuario_db = cursor.fetchone()
+
+        # Validação de existência e verificação do hash da senha
+        if not usuario_db or not verificar_senha(form_data.password, usuario_db["senha_hash"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="E-mail ou senha incorretos.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        token_acesso = criar_token_acesso(dados={"sub": usuario_db["email"]})
+        return {"access_token": token_acesso, "token_type": "bearer"}
+    finally:
+        cursor.close()
+        conexao.close()
+
+
+# --- ROTAS PÚBLICAS DO SISTEMA ---
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     return templates.TemplateResponse(request, "index.html")
-
-
-@app.post("/usuarios")
-def criar_usuario(usuario: Usuario):
-    conexao = get_db_connection()
-    cursor = conexao.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO funcionarios (nome, cargo, cpf) VALUES (%s, %s, %s)",
-            (usuario.nome, usuario.cargo, usuario.cpf)
-        )
-        conexao.commit()
-        return {"mensagem": "Funcionário cadastrado com sucesso!"}
-    finally:
-        cursor.close()
-        conexao.close()
 
 
 @app.get("/epis")
@@ -95,8 +121,32 @@ def listar_epis():
         conexao.close()
 
 
+# --- ROTAS PROTEGIDAS (EXIGEM AUTENTICAÇÃO JWT) ---
+
+@app.post("/usuarios")
+def criar_usuario(
+    usuario: Usuario,
+    usuario_autenticado: str = Depends(obter_usuario_atual)
+):
+    conexao = get_db_connection()
+    cursor = conexao.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO funcionarios (nome, cargo, cpf) VALUES (%s, %s, %s)",
+            (usuario.nome, usuario.cargo, usuario.cpf)
+        )
+        conexao.commit()
+        return {"mensagem": "Funcionário cadastrado com sucesso!"}
+    finally:
+        cursor.close()
+        conexao.close()
+
+
 @app.post("/epis")
-def cadastrar_epi(item: Epi):
+def cadastrar_epi(
+    item: Epi,
+    usuario_autenticado: str = Depends(obter_usuario_atual)
+):
     conexao = get_db_connection()
     cursor = conexao.cursor()
     try:
@@ -112,7 +162,10 @@ def cadastrar_epi(item: Epi):
 
 
 @app.post("/entregas")
-def registrar_entrega(item: Entrega):
+def registrar_entrega(
+    item: Entrega,
+    usuario_autenticado: str = Depends(obter_usuario_atual)
+):
     conexao = get_db_connection()
     cursor = conexao.cursor(dictionary=True)
     try:
@@ -137,7 +190,11 @@ def registrar_entrega(item: Entrega):
 
 
 @app.put("/epis/{id_epi}")
-def editar_epi(id_epi: int, item: Epi):
+def editar_epi(
+    id_epi: int,
+    item: Epi,
+    usuario_autenticado: str = Depends(obter_usuario_atual)
+):
     conexao = get_db_connection()
     cursor = conexao.cursor()
     try:
@@ -153,7 +210,7 @@ def editar_epi(id_epi: int, item: Epi):
 
 
 @app.get("/relatorio-entregas")
-def gerar_relatorio():
+def gerar_relatorio(usuario_autenticado: str = Depends(obter_usuario_atual)):
     conexao = get_db_connection()
     cursor = conexao.cursor(dictionary=True)
     try:
@@ -169,7 +226,7 @@ def gerar_relatorio():
 
 
 @app.get("/dashboard-stats")
-def get_stats():
+def get_stats(usuario_autenticado: str = Depends(obter_usuario_atual)):
     conexao = get_db_connection()
     cursor = conexao.cursor(dictionary=True)
     stats = {"top_epis": [], "estoque_critico": 0, "entregas_hoje": 0}
@@ -182,7 +239,6 @@ def get_stats():
         stats["estoque_critico"] = critico_res["critico"] if critico_res else 0
 
         try:
-            # Ajuste para a coluna de data real da tabela entregas se existir
             cursor.execute("SELECT COUNT(*) as hoje FROM entregas WHERE DATE(data_entrega) = CURDATE()")
             hoje_res = cursor.fetchone()
             stats["entregas_hoje"] = hoje_res["hoje"] if hoje_res else 0
@@ -198,9 +254,10 @@ def get_stats():
         conexao.close()
 
 
-# --- ROTA DE INTELIGÊNCIA ARTIFICIAL ---
+# --- ROTA DE INTELIGÊNCIA ARTIFICIAL (PROTEGIDA) ---
+
 @app.get("/analise-ia")
-def analisar_ia():
+def analisar_ia(usuario_autenticado: str = Depends(obter_usuario_atual)):
     conexao = get_db_connection()
     cursor = conexao.cursor(dictionary=True)
 
